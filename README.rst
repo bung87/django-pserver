@@ -10,11 +10,13 @@ Django-pserver solves this problem by reusing the listening socket when it resta
 
 Usage
 -----
-To use it, simply add ``pserver`` to your ``INSTALLED_APPS``, and run ``manage.py runserver`` as usual.
+To use it, simply add ``pserver`` to your ``INSTALLED_APPS``, and run ``manage.py runserverp`` with options as usual.
 
 
 TODO
 ----
 I've tested this on Django 1.2.4 and 1.3, but it could well work with other versions.
+- I've made this compatible with Django 1.5, but not tested with < 1.5.
 
 Tested on OS X only, but should work on any UNIX variant. It will probably break horribly on Windows.
+- I can confirm this :)
