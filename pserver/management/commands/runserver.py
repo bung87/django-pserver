@@ -1,13 +1,10 @@
-from optparse import make_option
 import os
 import sys
 import socket
 
 from django.core.management.base import CommandError
 from django.core.management.commands.runserver import Command as RunServerCommand
-from django.core.handlers.wsgi import WSGIHandler
-from django.core.servers.basehttp import AdminMediaHandler, WSGIServerException, WSGIServer, WSGIRequestHandler
-from django.utils import autoreload
+from django.core.servers.basehttp import WSGIServerException, WSGIServer, WSGIRequestHandler
 from pserver import __version__
 
 
