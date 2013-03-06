@@ -16,7 +16,9 @@ To use it, simply add ``pserver`` to your ``INSTALLED_APPS``, and run ``manage.p
 TODO
 ----
 I've tested this on Django 1.2.4 and 1.3, but it could well work with other versions.
-- I've made this compatible with Django 1.5, but not tested with < 1.5.
+
+> I've made this compatible with Django 1.5, but not tested with < 1.5.
 
 Tested on OS X only, but should work on any UNIX variant. It will probably break horribly on Windows.
-- I can confirm this :)
+
+> I can confirm this :)
