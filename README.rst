@@ -21,4 +21,4 @@ I've tested this on Django 1.2.4 and 1.3, but it could well work with other vers
 
 Tested on OS X only, but should work on any UNIX variant. It will probably break horribly on Windows.
 
-> I can confirm this :)
+> Works like a charm on Linux afaik. And what kind of an idiot uses Django on Windows?
