@@ -3,8 +3,9 @@ import sys
 import socket
 
 from django.core.management.base import CommandError
-from django.core.management.commands.runserver import Command as RunServerCommand
-from django.core.servers.basehttp import WSGIServerException, WSGIServer, WSGIRequestHandler
+# from django.core.management.commands.runserver import Command as RunServerCommand
+from django.contrib.staticfiles.management.commands.runserver import Command as RunServerCommand
+from django.core.servers.basehttp import  WSGIServer, WSGIRequestHandler
 from pserver import __version__
 
 
@@ -15,19 +16,18 @@ PERSISTENT_SOCK = None
 
 
 class Command(RunServerCommand):
-    option_list = RunServerCommand.option_list
+    # option_list = RunServerCommand.option_list
     help = "Starts a persistent web server that reuses its listening socket on reload."
 
-
-    def handle(self, addrport='', *args, **options):
+    def handle(self,  *args, **options):
         if hasattr(RunServerCommand, 'inner_run'):
             self.has_ipv6_support = True
             # Django 1.3-ish, our overwritten self.run and self.inner_run functions should work
-            return super(Command, self).handle(addrport, *args, **options)
+            return super(Command, self).handle( *args, **options)
         else:
             self.has_ipv6_support = False
             self.use_ipv6 = False # no IPv6 support at that time
-            return self.handle_pre13(addrport, *args, **options)
+            return self.handle_pre13( *args, **options)
 
 
     def init_sock(self):
@@ -55,7 +55,7 @@ class Command(RunServerCommand):
 
         try:
             httpd.server_bind()
-        except WSGIServerException, e:
+        except  Exception as e:
             if 'Errno 22' in str(e):
                 # may have been bound, just emulate some stuff done in server_bind (like setting up environ)
                 httpd.server_name = socket.getfqdn(addr)
@@ -68,10 +68,10 @@ class Command(RunServerCommand):
         httpd.serve_forever()
 
 
-    def handle_pre13(self, addrport, *args, **options):
+    def handle_pre13(self, addrport = None, *args, **options):
         """ modified version of ``runserver.Command.handle`` from Django 1.2.3's (r14552) """
         import django
-        from django.core.servers.basehttp import run, AdminMediaHandler, WSGIServerException
+        from django.core.servers.basehttp import run, AdminMediaHandler
         from django.core.handlers.wsgi import WSGIHandler
         try:
             from django.contrib.staticfiles.handlers import StaticFilesHandler
@@ -129,7 +129,7 @@ class Command(RunServerCommand):
                 # serve admin media like old-school (deprecation pending)
                 handler = AdminMediaHandler(handler, admin_media_path)
                 self.run_wsgi_server(addr, int(port), handler)
-            except WSGIServerException, e:
+            except  e:
                 # Use helpful error messages instead of ugly tracebacks.
                 ERRORS = {
                     13: "You don't have permission to access that port.",
@@ -170,7 +170,7 @@ class Command(RunServerCommand):
         quit_command = (sys.platform == 'win32') and 'CTRL-BREAK' or 'CONTROL-C'
 
         self.stdout.write("Validating models...\n\n")
-        self.validate(display_num_errors=True)
+        self.check(display_num_errors=True)
         self.stdout.write((
             "Django version %(version)s, using settings %(settings)r\n"
             "pserver %(ps_version)s is running at http://%(addr)s:%(port)s/\n"
