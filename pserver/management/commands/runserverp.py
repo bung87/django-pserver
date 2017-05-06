@@ -27,14 +27,13 @@ def init_sock(use_ipv6):
                                         socket.SOCK_STREAM)
 
 def run(addr, port, wsgi_handler, ipv6=False, threading=False, server_cls=WSGIServer):
-    global PERSISTENT_SOCK
-    init_sock(ipv6)
+
     server_address = (addr, port)
     if threading:
         httpd_cls = type('WSGIServer', (socketserver.ThreadingMixIn, server_cls), {})
     else:
         httpd_cls = server_cls
-    httpd = httpd_cls(server_address, WSGIRequestHandler, ipv6=ipv6)
+    httpd = httpd_cls(server_address, WSGIRequestHandler, ipv6=ipv6 ,bind_and_activate=False)
     httpd.socket = PERSISTENT_SOCK
     if threading:
         # ThreadingMixIn.daemon_threads indicates how threads will behave on an
@@ -62,6 +61,11 @@ def run(addr, port, wsgi_handler, ipv6=False, threading=False, server_cls=WSGISe
 class Command(RunServerCommand):
     # option_list = RunServerCommand.option_list
     help = "Starts a persistent web server that reuses its listening socket on reload."
+   
+    def run(self, **options):
+        """ Override the parent method which exists after Django r14553 (1.3 release) """
+        init_sock(options["use_ipv6"])
+        return super(Command, self).run( **options)
 
     def inner_run(self, *args, **options):
         # If an exception was silenced in ManagementUtility.execute in order
