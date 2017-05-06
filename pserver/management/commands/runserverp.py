@@ -1,198 +1,118 @@
 import os
 import sys
 import socket
-
+from datetime import datetime
+from django.conf import settings
 from django.core.management.base import CommandError
 # from django.core.management.commands.runserver import Command as RunServerCommand
 from django.contrib.staticfiles.management.commands.runserver import Command as RunServerCommand
 from django.core.servers.basehttp import  WSGIServer, WSGIRequestHandler
 from pserver import __version__
-
+from django.utils import autoreload
+from django.utils.six.moves import socketserver
 
 # store the socket at module level so it can be shared between parent a child process
 PERSISTENT_SOCK = None
+def init_sock(use_ipv6):
+    global PERSISTENT_SOCK
+    existing_fd = os.environ.get('SERVER_FD')
+    if not existing_fd:
+        PERSISTENT_SOCK = socket.socket(socket.AF_INET6 if use_ipv6 else socket.AF_INET,
+                                        socket.SOCK_STREAM)
+        os.environ['SERVER_FD'] = str(PERSISTENT_SOCK.fileno())
+    else:
+        # print "Reusing existing socket (fd=%s)" % existing_fd
+        PERSISTENT_SOCK = socket.fromfd(int(existing_fd),
+                                        socket.AF_INET6 if use_ipv6 else socket.AF_INET,
+                                        socket.SOCK_STREAM)
 
-
+def run(addr, port, wsgi_handler, ipv6=False, threading=False, server_cls=WSGIServer):
+    global PERSISTENT_SOCK
+    init_sock(ipv6)
+    server_address = (addr, port)
+    if threading:
+        httpd_cls = type('WSGIServer', (socketserver.ThreadingMixIn, server_cls), {})
+    else:
+        httpd_cls = server_cls
+    httpd = httpd_cls(server_address, WSGIRequestHandler, ipv6=ipv6)
+    httpd.socket = PERSISTENT_SOCK
+    if threading:
+        # ThreadingMixIn.daemon_threads indicates how threads will behave on an
+        # abrupt shutdown; like quitting the server by the user or restarting
+        # by the auto-reloader. True means the server will not wait for thread
+        # termination before it quits. This will make auto-reloader faster
+        # and will prevent the need to kill the server manually if a thread
+        # isn't terminating correctly.
+        httpd.daemon_threads = True
+    try:
+        httpd.server_bind()
+    except  Exception as e:
+        if 'Errno 22' in str(e):
+            # may have been bound, just emulate some stuff done in server_bind (like setting up environ)
+            httpd.server_name = socket.getfqdn(addr)
+            httpd.server_port = port
+            httpd.setup_environ()
+        else:
+            raise e
+    httpd.server_activate()
+    httpd.set_app(wsgi_handler)
+    httpd.serve_forever()
 
 
 class Command(RunServerCommand):
     # option_list = RunServerCommand.option_list
     help = "Starts a persistent web server that reuses its listening socket on reload."
 
-    def handle(self,  *args, **options):
-        if hasattr(RunServerCommand, 'inner_run'):
-            self.has_ipv6_support = True
-            # Django 1.3-ish, our overwritten self.run and self.inner_run functions should work
-            return super(Command, self).handle( *args, **options)
-        else:
-            self.has_ipv6_support = False
-            self.use_ipv6 = False # no IPv6 support at that time
-            return self.handle_pre13( *args, **options)
-
-
-    def init_sock(self):
-        global PERSISTENT_SOCK
-        existing_fd = os.environ.get('SERVER_FD')
-        if not existing_fd:
-            PERSISTENT_SOCK = socket.socket(socket.AF_INET6 if self.use_ipv6 else socket.AF_INET,
-                                            socket.SOCK_STREAM)
-            os.environ['SERVER_FD'] = str(PERSISTENT_SOCK.fileno())
-        else:
-            # print "Reusing existing socket (fd=%s)" % existing_fd
-            PERSISTENT_SOCK = socket.fromfd(int(existing_fd),
-                                            socket.AF_INET6 if self.use_ipv6 else socket.AF_INET,
-                                            socket.SOCK_STREAM)
-
-    def run_wsgi_server(self, addr, port, handler):
-        """ replaces ``django.core.servers.basehttp.run`` """
-        global PERSISTENT_SOCK
-        kwargs = dict(bind_and_activate=False)
-        if self.has_ipv6_support:
-            kwargs['ipv6'] = self.use_ipv6
-        httpd = WSGIServer((addr, port), WSGIRequestHandler, **kwargs)
-        # patch the socket
-        httpd.socket = PERSISTENT_SOCK
-
-        try:
-            httpd.server_bind()
-        except  Exception as e:
-            if 'Errno 22' in str(e):
-                # may have been bound, just emulate some stuff done in server_bind (like setting up environ)
-                httpd.server_name = socket.getfqdn(addr)
-                httpd.server_port = port
-                httpd.setup_environ()
-            else:
-                raise
-        httpd.server_activate()
-        httpd.set_app(handler)
-        httpd.serve_forever()
-
-
-    def handle_pre13(self, addrport = None, *args, **options):
-        """ modified version of ``runserver.Command.handle`` from Django 1.2.3's (r14552) """
-        import django
-        from django.core.servers.basehttp import run, AdminMediaHandler
-        from django.core.handlers.wsgi import WSGIHandler
-        try:
-            from django.contrib.staticfiles.handlers import StaticFilesHandler
-        except ImportError:
-            StaticFilesHandler = None
-
-        if args:
-            raise CommandError('Usage is runserver %s' % self.args)
-        if not addrport:
-            addr = ''
-            port = '8000'
-        else:
-            try:
-                addr, port = addrport.split(':')
-            except ValueError:
-                addr, port = '', addrport
-        if not addr:
-            addr = '127.0.0.1'
-
-        if not port.isdigit():
-            raise CommandError("%r is not a valid port number." % port)
-
-        use_reloader = options.get('use_reloader', True)
-        admin_media_path = options.get('admin_media_path', '')
-        shutdown_message = options.get('shutdown_message', '')
-        use_static_handler = options.get('use_static_handler', True)
-        insecure_serving = options.get('insecure_serving', False)
-        quit_command = (sys.platform == 'win32') and 'CTRL-BREAK' or 'CONTROL-C'
-
-        self.init_sock()
-
-        def inner_run():
-            from django.conf import settings
-            from django.utils import translation
-            print "Validating models..."
-            self.validate(display_num_errors=True)
-            print "\nDjango version %s, using settings %r" % (django.get_version(), settings.SETTINGS_MODULE)
-            print "pserver %s is running at http://%s:%s/" % (__version__, addr, port)
-            print "Quit the server with %s." % quit_command
-
-            # django.core.management.base forces the locale to en-us. We should
-            # set it up correctly for the first request (particularly important
-            # in the "--noreload" case).
-            translation.activate(settings.LANGUAGE_CODE)
-
-            try:
-                handler = WSGIHandler()
-                allow_serving = (settings.DEBUG and use_static_handler or
-                    (use_static_handler and insecure_serving))
-
-                if StaticFilesHandler:
-                    if (allow_serving and
-                            "django.contrib.staticfiles" in settings.INSTALLED_APPS):
-                        handler = StaticFilesHandler(handler)
-                # serve admin media like old-school (deprecation pending)
-                handler = AdminMediaHandler(handler, admin_media_path)
-                self.run_wsgi_server(addr, int(port), handler)
-            except  e:
-                # Use helpful error messages instead of ugly tracebacks.
-                ERRORS = {
-                    13: "You don't have permission to access that port.",
-                    98: "That port is already in use.",
-                    99: "That IP address can't be assigned-to.",
-                }
-                try:
-                    error_text = ERRORS[e.args[0].args[0]]
-                except (AttributeError, KeyError):
-                    error_text = str(e)
-                sys.stderr.write(self.style.ERROR("Error: %s" % error_text) + '\n')
-                # Need to use an OS exit because sys.exit doesn't work in a thread
-                os._exit(1)
-            except KeyboardInterrupt:
-                if shutdown_message:
-                    print shutdown_message
-                sys.exit(0)
-
-        if use_reloader:
-            from django.utils import autoreload
-            autoreload.main(inner_run)
-        else:
-            inner_run()
-
-
-    def run(self, *args, **options):
-        """ Override the parent method which exists after Django r14553 (1.3 release) """
-        self.init_sock()
-        return super(Command, self).run(*args, **options)
-
-
     def inner_run(self, *args, **options):
-        """ Override the parent method which exists after Django r14553 (1.3 release) """
-        from django.conf import settings
-        from django.utils import translation
+        # If an exception was silenced in ManagementUtility.execute in order
+        # to be raised in the child process, raise it now.
+        autoreload.raise_last_exception()
 
+        threading = options['use_threading']
+        # 'shutdown_message' is a stealth option.
         shutdown_message = options.get('shutdown_message', '')
-        quit_command = (sys.platform == 'win32') and 'CTRL-BREAK' or 'CONTROL-C'
+        quit_command = 'CTRL-BREAK' if sys.platform == 'win32' else 'CONTROL-C'
 
-        self.stdout.write("Validating models...\n\n")
+        self.stdout.write("Performing system checks...\n\n")
         self.check(display_num_errors=True)
+        # Need to check migrations here, so can't use the
+        # requires_migrations_check attribute.
+        self.check_migrations()
+        now = datetime.now().strftime('%B %d, %Y - %X')
+        self.stdout.write(now)
         self.stdout.write((
             "Django version %(version)s, using settings %(settings)r\n"
-            "pserver %(ps_version)s is running at http://%(addr)s:%(port)s/\n"
+            "Starting development server at %(protocol)s://%(addr)s:%(port)s/\n"
             "Quit the server with %(quit_command)s.\n"
         ) % {
             "version": self.get_version(),
-            "ps_version": __version__,
             "settings": settings.SETTINGS_MODULE,
-            "addr": self._raw_ipv6 and '[%s]' % self.addr or self.addr,
+            "protocol": self.protocol,
+            "addr": '[%s]' % self.addr if self._raw_ipv6 else self.addr,
             "port": self.port,
             "quit_command": quit_command,
         })
-        # django.core.management.base forces the locale to en-us. We should
-        # set it up correctly for the first request (particularly important
-        # in the "--noreload" case).
-        translation.activate(settings.LANGUAGE_CODE)
 
         try:
             handler = self.get_handler(*args, **options)
-            self.run_wsgi_server(self.addr, int(self.port), handler)
+            run(self.addr, int(self.port), handler,
+                ipv6=self.use_ipv6, threading=threading, server_cls=self.server_cls)
+        except socket.error as e:
+            # Use helpful error messages instead of ugly tracebacks.
+            ERRORS = {
+                errno.EACCES: "You don't have permission to access that port.",
+                errno.EADDRINUSE: "That port is already in use.",
+                errno.EADDRNOTAVAIL: "That IP address can't be assigned to.",
+            }
+            try:
+                error_text = ERRORS[e.errno]
+            except KeyError:
+                error_text = e
+            self.stderr.write("Error: %s" % error_text)
+            # Need to use an OS exit because sys.exit doesn't work in a thread
+            os._exit(1)
         except KeyboardInterrupt:
             if shutdown_message:
-                self.stdout.write("%s\n" % shutdown_message)
+                self.stdout.write(shutdown_message)
             sys.exit(0)
 
